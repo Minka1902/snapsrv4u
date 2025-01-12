@@ -1,11 +1,15 @@
-import express from 'express';
-import { faker } from '@faker-js/faker';
+const { faker } = require('@faker-js/faker');
+const express = require('express');
+const cors = require("cors");
 
-export class MockApiServer {
+class MockApiServer {
     constructor(port = 3000) {
         this.app = express();
+        this.app.options('*', cors());
+        this.app.use(cors());
         this.port = port;
-        this.routes = new Map();
+
+        // this.routes = new Map();
     }
 
     generateValue(type, config = {}) {
@@ -37,7 +41,7 @@ export class MockApiServer {
             case 'firstname': return faker.person.firstName();
             case 'lastname': return faker.person.lastName();
             case 'fullname': return faker.person.fullName();
-            case 'username': return faker.internet.userName();
+            case 'username': return faker.internet.username();
             case 'email': return faker.internet.email();
             case 'avatar': return faker.image.avatar();
             case 'phone': return faker.phone.number();
@@ -112,20 +116,30 @@ export class MockApiServer {
     }
 
     addRoute(path, config) {
-        const { method = 'GET', count = 1, properties } = config;
+        const {
+            method = 'GET',
+            count = 1,
+            properties
+        } = config;
 
-        // Handle pre-configured schemas
         const finalProperties = properties === 'person' ?
             MockApiServer.personSchema : properties;
 
         this.app[method.toLowerCase()](path, (req, res) => {
-            if (count === 1) {
-                res.json(this.generateObject(finalProperties));
-            } else {
-                const items = Array.from({ length: count }, () =>
-                    this.generateObject(finalProperties)
-                );
-                res.json(items);
+            try {
+                let responseData;
+
+                if (count === 1) {
+                    responseData = this.generateObject(finalProperties);
+                } else {
+                    responseData = Array.from({ length: count }, () =>
+                        this.generateObject(finalProperties)
+                    );
+                }
+
+                res.json({ data: responseData });
+            } catch (error) {
+                res.status(500).json({ error: error.message });
             }
         });
     }
