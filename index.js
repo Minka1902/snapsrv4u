@@ -150,4 +150,5 @@ class MockApiServer {
         });
     }
 }
- 
+
+module.exports.MockApiServer = MockApiServer;
