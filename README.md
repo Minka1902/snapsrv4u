@@ -66,7 +66,7 @@ server.addRoute(path, config);
 server.addRoute('/api/person', {
   method: 'GET',
   count: 1,
-  properties: 'person'
+  properties: 'person',
 });
 ```
 
