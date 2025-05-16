@@ -1,17 +1,34 @@
 {
   "name": "snapsrv4u",
-  "version": "1.0.0",
-  "description": "",
+  "version": "1.1.0",
+  "description": "Light-weight package for developers that need a reacting server in a blink of an eye",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "author": "Michael Scharff",
-  "license": "ISC",
+  "author": {
+    "name": "Michael Scharff",
+    "email": "minka.scharff@gmail.com"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Minka1902/snapsrv4u.git"
+  },
   "dependencies": {
     "@faker-js/faker": "^9.3.0",
+    "body-parser": "^1.20.3",
     "cors": "^2.8.5",
-    "csv-for-you": "^1.0.72",
-    "express": "^4.21.2"
-  }
+    "express": "^4.21.2",
+    "snap4db": "^1.0.0"
+  },
+  "keywords": [
+    "mocker",
+    "mock server",
+    "mock api",
+    "server",
+    "development",
+    "instant",
+    "backend"
+  ],
+  "license": "ISC"
 }
