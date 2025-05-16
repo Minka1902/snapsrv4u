@@ -1,19 +1,22 @@
 const { faker } = require('@faker-js/faker');
 const express = require('express');
+const bodyParser = require('body-parser');
 const cors = require("cors");
+const MockDB = require('snap4db');
+const { getUniquePropertyNames, getFaultyPropertyNames } = require('./utils/functions');
 
 class MockApiServer {
-    constructor(port = 3000) {
+    constructor(port = 4517, dbName = null) {
         this.app = express();
         this.app.options('*', cors());
+        this.db = dbName && new MockDB(dbName);
         this.app.use(cors());
+        this.app.use(bodyParser.json());
         this.port = port;
-
-        // this.routes = new Map();
     }
 
     generateValue(type, config = {}) {
-        const { min = 0, max = 1000, zeros = 5 } = config;
+        const { min = 0, max = 1000, zeros = 9 } = config;
 
         // Basic types
         switch (type.toLowerCase()) {
@@ -125,19 +128,51 @@ class MockApiServer {
         const finalProperties = properties === 'person' ?
             MockApiServer.personSchema : properties;
 
-        this.app[method.toLowerCase()](path, (req, res) => {
+        this.app[method.toLowerCase()](path, async (req, res) => {
             try {
-                let responseData;
-
-                if (count === 1) {
-                    responseData = this.generateObject(finalProperties);
-                } else {
-                    responseData = Array.from({ length: count }, () =>
-                        this.generateObject(finalProperties)
-                    );
+                if (method.toLowerCase() === 'get') {
+                    let responseData;
+                    if (properties) {
+                        if (count === 1) {
+                            responseData = this.generateObject(finalProperties);
+                        } else {
+                            responseData = Array.from({ length: count }, () =>
+                                this.generateObject(finalProperties)
+                            );
+                        }
+                    } else if (req.params.id) responseData = await this.db.findById(req.params.id, config.collection);
+                    else if (req.body) responseData = await this.db.findById(req.body.id, config?.collection);
+                    else if (req.query.id) responseData = await this.db.findById(req.query.id, config?.collection);
+                    else responseData = 'Cant find object';
+                    res.json({ data: responseData });
+                } else if (method.toLowerCase() === 'post') {
+                    const unique = getUniquePropertyNames(properties);
+                    if (unique.length !== 0) {
+                        const col = await this.db.getCollection(config.collection);
+                        if (col.length !== 0) {
+                            const isUnique = getFaultyPropertyNames(req.body, col, unique);
+                            if (isUnique.length === 0) {
+                                const response = req.body ? await this.db.insert(config.collection, req.body) : 'No data received.';
+                                res.json(response);
+                            } else {
+                                res.json({ error: { message: `Property <${isUnique}> needs to be unique` } })
+                            }
+                        } else {
+                            const response = req.body ? await this.db.insert(config.collection, req.body) : 'No data received.';
+                            res.json(response);
+                        }
+                    } else {
+                        const response = req.body ? await this.db.insert(config.collection, req.body) : 'No data received.';
+                        res.json(response);
+                    }
+                } else if (method.toLowerCase() === 'delete') {
+                    let resp;
+                    if (req.params) resp = await this.db.deleteById(req.params.id, config?.collection);
+                    else if (req.body) resp = await this.db.deleteById(req.body.id, config?.collection);
+                    else if (req.query.id) resp = await this.db.deleteById(req.query.id, config?.collection);
+                    else resp = "Didn't find any item with this ID";
+                    res.json({ message: resp });
                 }
-
-                res.json({ data: responseData });
             } catch (error) {
                 res.status(500).json({ error: error.message });
             }
@@ -151,4 +186,4 @@ class MockApiServer {
     }
 }
 
-module.exports.MockApiServer = MockApiServer;
+module.exports = MockApiServer;
