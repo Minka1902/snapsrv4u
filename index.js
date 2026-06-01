@@ -1,24 +1,106 @@
+const http = require('http');
 const { faker } = require('@faker-js/faker');
 const express = require('express');
 const bodyParser = require('body-parser');
-const cors = require("cors");
+const cors = require('cors');
 const MockDB = require('snap4db');
 const { getUniquePropertyNames, getFaultyPropertyNames } = require('./utils/functions');
 
 class MockApiServer {
-    constructor(port = 4517, dbName = null) {
+    /**
+     * @param {object|number} options - Config object or legacy port number
+     * @param {number}  [options.port=4517]
+     * @param {string}  [options.dbName]      - snap4db database name (legacy)
+     * @param {object}  [options.db]          - Real database config
+     * @param {string}  [options.db.type]     - 'mongodb' | 'postgres' | 'sqlite'
+     * @param {string}  [options.db.uri]      - MongoDB URI
+     * @param {string}  [options.db.connectionString] - Postgres connection string
+     * @param {string}  [options.db.filename] - SQLite filename
+     * @param {string}  [options.db.name]     - MongoDB database name
+     * @param {boolean} [options.websocket=true]  - Enable ws raw WebSocket server
+     * @param {boolean} [options.socketio=true]   - Enable Socket.io server
+     */
+    constructor(options = {}) {
+        // Support legacy positional signature: new MockApiServer(port, dbName)
+        if (typeof options === 'number') {
+            options = { port: options, dbName: arguments[1] || null };
+        }
+
+        const {
+            port = 4517,
+            dbName = null,
+            db = null,
+            websocket = true,
+            socketio = true,
+        } = options;
+
+        this.port = port;
+        this._wsEnabled = websocket;
+        this._sioEnabled = socketio;
+        this._socketHandlers = {};
+
         this.app = express();
         this.app.options('*', cors());
-        this.db = dbName && new MockDB(dbName);
         this.app.use(cors());
         this.app.use(bodyParser.json());
-        this.port = port;
+
+        // Database setup
+        if (db) {
+            this.db = this._createAdapter(db);
+        } else if (dbName) {
+            this.db = new MockDB(dbName);
+        } else {
+            this.db = null;
+        }
+    }
+
+    _createAdapter(dbConfig) {
+        const { type } = dbConfig;
+        switch (type) {
+            case 'mongodb': {
+                const MongoAdapter = require('./adapters/MongoAdapter');
+                return new MongoAdapter(dbConfig);
+            }
+            case 'postgres': {
+                const PostgresAdapter = require('./adapters/PostgresAdapter');
+                return new PostgresAdapter(dbConfig);
+            }
+            case 'sqlite': {
+                const SqliteAdapter = require('./adapters/SqliteAdapter');
+                return new SqliteAdapter(dbConfig);
+            }
+            default:
+                throw new Error(`Unknown db.type "${type}". Use 'mongodb', 'postgres', or 'sqlite'.`);
+        }
+    }
+
+    _broadcast(event, payload) {
+        const message = JSON.stringify({ event, ...payload });
+        if (this.io) {
+            this.io.emit(event, payload);
+        }
+        if (this.wss) {
+            this.wss.clients.forEach(client => {
+                if (client.readyState === 1 /* OPEN */) {
+                    client.send(message);
+                }
+            });
+        }
+    }
+
+    /**
+     * Register a custom Socket.io / WebSocket event handler.
+     * @param {string} event - Event name
+     * @param {function} handler - Called with (data, socket) for Socket.io,
+     *                             or (data, wsClient) for raw WebSocket
+     */
+    addSocketEvent(event, handler) {
+        this._socketHandlers[event] = handler;
     }
 
     generateValue(type, config = {}) {
         const { min = 0, max = 1000, zeros = 9 } = config;
 
-        // Basic types
         switch (type.toLowerCase()) {
             // Numbers and IDs
             case 'number': return faker.number.int({ min, max });
@@ -49,7 +131,7 @@ class MockApiServer {
             case 'avatar': return faker.image.avatar();
             case 'phone': return faker.phone.number();
             case 'gender': return faker.person.gender();
-            case 'jobTitle': return faker.person.jobTitle();
+            case 'jobtitle': return faker.person.jobTitle();
             case 'bio': return faker.person.bio();
 
             // Internet
@@ -69,7 +151,7 @@ class MockApiServer {
             // Company
             case 'company': return faker.company.name();
             case 'department': return faker.commerce.department();
-            case 'catchPhrase': return faker.company.catchPhrase();
+            case 'catchphrase': return faker.company.catchPhrase();
 
             // Commerce
             case 'product': return faker.commerce.productName();
@@ -79,7 +161,7 @@ class MockApiServer {
             // Boolean
             case 'boolean': return faker.datatype.boolean();
 
-            // Allow direct faker access
+            // Direct faker access
             case 'faker':
                 if (config.method) {
                     const [namespace, method] = config.method.split('.');
@@ -100,7 +182,6 @@ class MockApiServer {
         return result;
     }
 
-    // Pre-configured person schema
     static get personSchema() {
         return {
             userId: { type: 'uuid' },
@@ -140,37 +221,50 @@ class MockApiServer {
                                 this.generateObject(finalProperties)
                             );
                         }
-                    } else if (req.params.id) responseData = await this.db.findById(req.params.id, config.collection);
-                    else if (req.body) responseData = await this.db.findById(req.body.id, config?.collection);
-                    else if (req.query.id) responseData = await this.db.findById(req.query.id, config?.collection);
-                    else responseData = 'Cant find object';
+                    } else if (req.params.id) {
+                        responseData = await this.db.findById(req.params.id, config.collection);
+                    } else if (req.body && req.body.id) {
+                        responseData = await this.db.findById(req.body.id, config?.collection);
+                    } else if (req.query.id) {
+                        responseData = await this.db.findById(req.query.id, config?.collection);
+                    } else {
+                        responseData = 'Cant find object';
+                    }
                     res.json({ data: responseData });
+
                 } else if (method.toLowerCase() === 'post') {
-                    const unique = getUniquePropertyNames(properties);
+                    const unique = properties ? getUniquePropertyNames(properties) : [];
+                    let response;
                     if (unique.length !== 0) {
                         const col = await this.db.getCollection(config.collection);
                         if (col.length !== 0) {
                             const isUnique = getFaultyPropertyNames(req.body, col, unique);
                             if (isUnique.length === 0) {
-                                const response = req.body ? await this.db.insert(config.collection, req.body) : 'No data received.';
-                                res.json(response);
+                                response = req.body ? await this.db.insert(config.collection, req.body) : 'No data received.';
                             } else {
-                                res.json({ error: { message: `Property <${isUnique}> needs to be unique` } })
+                                return res.json({ error: { message: `Property <${isUnique}> needs to be unique` } });
                             }
                         } else {
-                            const response = req.body ? await this.db.insert(config.collection, req.body) : 'No data received.';
-                            res.json(response);
+                            response = req.body ? await this.db.insert(config.collection, req.body) : 'No data received.';
                         }
                     } else {
-                        const response = req.body ? await this.db.insert(config.collection, req.body) : 'No data received.';
-                        res.json(response);
+                        response = req.body ? await this.db.insert(config.collection, req.body) : 'No data received.';
                     }
+                    this._broadcast('created', { route: path, record: response });
+                    res.json(response);
+
                 } else if (method.toLowerCase() === 'delete') {
                     let resp;
-                    if (req.params) resp = await this.db.deleteById(req.params.id, config?.collection);
-                    else if (req.body) resp = await this.db.deleteById(req.body.id, config?.collection);
-                    else if (req.query.id) resp = await this.db.deleteById(req.query.id, config?.collection);
-                    else resp = "Didn't find any item with this ID";
+                    if (req.params && req.params.id) {
+                        resp = await this.db.deleteById(req.params.id, config?.collection);
+                    } else if (req.body && req.body.id) {
+                        resp = await this.db.deleteById(req.body.id, config?.collection);
+                    } else if (req.query.id) {
+                        resp = await this.db.deleteById(req.query.id, config?.collection);
+                    } else {
+                        resp = "Didn't find any item with this ID";
+                    }
+                    this._broadcast('deleted', { route: path, id: req.params?.id || req.body?.id || req.query?.id });
                     res.json({ message: resp });
                 }
             } catch (error) {
@@ -179,10 +273,57 @@ class MockApiServer {
         });
     }
 
-    start() {
-        this.app.listen(this.port, () => {
-            console.log(`Mock API Server running at http://localhost:${this.port}`);
+    async start() {
+        // Connect the real DB adapter if one was configured
+        if (this.db && typeof this.db.connect === 'function') {
+            await this.db.connect();
+        }
+
+        const server = http.createServer(this.app);
+
+        // Socket.io
+        if (this._sioEnabled) {
+            try {
+                const { Server } = require('socket.io');
+                this.io = new Server(server, { cors: { origin: '*' } });
+                this.io.on('connection', socket => {
+                    for (const [event, handler] of Object.entries(this._socketHandlers)) {
+                        socket.on(event, data => handler(data, socket));
+                    }
+                });
+            } catch {
+                console.warn('[snapsrv4u] socket.io not installed — Socket.io disabled. Run: npm install socket.io');
+            }
+        }
+
+        // Raw WebSocket (ws)
+        if (this._wsEnabled) {
+            try {
+                const { WebSocketServer } = require('ws');
+                this.wss = new WebSocketServer({ server });
+                this.wss.on('connection', ws => {
+                    ws.on('message', raw => {
+                        try {
+                            const { event, data } = JSON.parse(raw);
+                            const handler = this._socketHandlers[event];
+                            if (handler) handler(data, ws);
+                        } catch { /* ignore malformed messages */ }
+                    });
+                });
+            } catch {
+                console.warn('[snapsrv4u] ws not installed — WebSocket disabled. Run: npm install ws');
+            }
+        }
+
+        server.listen(this.port, () => {
+            const lines = [`Mock API Server running at http://localhost:${this.port}`];
+            if (this.io) lines.push(`  Socket.io  → ws://localhost:${this.port}`);
+            if (this.wss) lines.push(`  WebSocket  → ws://localhost:${this.port}`);
+            console.log(lines.join('\n'));
         });
+
+        this.server = server;
+        return server;
     }
 }
 
