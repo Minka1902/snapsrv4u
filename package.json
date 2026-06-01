@@ -21,6 +21,13 @@
     "express": "^4.21.2",
     "snap4db": "^1.0.0"
   },
+  "optionalDependencies": {
+    "mongodb": "^6.0.0",
+    "pg": "^8.0.0",
+    "better-sqlite3": "^9.0.0",
+    "socket.io": "^4.0.0",
+    "ws": "^8.0.0"
+  },
   "keywords": [
     "mocker",
     "mock server",
