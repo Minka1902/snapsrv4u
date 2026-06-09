@@ -40,7 +40,7 @@ class MockApiServer {
         this._socketHandlers = {};
 
         this.app = express();
-        this.app.options('*', cors());
+        this.app.options(/.*/, cors());
         this.app.use(cors());
         this.app.use(bodyParser.json());
 
