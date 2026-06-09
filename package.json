@@ -15,16 +15,16 @@
     "url": "https://github.com/Minka1902/snapsrv4u.git"
   },
   "dependencies": {
-    "@faker-js/faker": "^9.3.0",
+    "@faker-js/faker": "^10.4.0",
     "body-parser": "^1.20.3",
-    "cors": "^2.8.5",
-    "express": "^4.21.2",
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
     "snap4db": "^1.0.0"
   },
   "optionalDependencies": {
-    "mongodb": "^6.0.0",
+    "better-sqlite3": "^12.10.0",
+    "mongodb": "^7.2.0",
     "pg": "^8.0.0",
-    "better-sqlite3": "^9.0.0",
     "socket.io": "^4.0.0",
     "ws": "^8.0.0"
   },
